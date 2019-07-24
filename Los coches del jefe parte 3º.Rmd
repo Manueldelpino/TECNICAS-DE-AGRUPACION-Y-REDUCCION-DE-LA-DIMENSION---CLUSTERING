@@ -1,0 +1,218 @@
+---
+title: "Los coches del Jefe 3 - CLUSTERIZACION"
+author: "Manuel del Pino Guerrero"
+date: "17 Diciembre 2018"
+output:
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+---
+1.1 INTRODUCCIÓN 
+
+Tal y como hemos visto en las secciones precedentes, uno de los mayores problemas a los que debe enfrentarse el analista es el de la determinación del número de clústers con los que ﬁnalmente trabajar, de cara a ofrecer una interpretación de la solución lo más realista y sencilla posible. A continuación expondremos algunos procedimientos para tratar de resolver la cuestión. 
+Este informe consiste en una continuación del anterior informe realizado con el fin de cerciorarnos cómo repartir la colección de coches en las distintas residencias. Cuando establecimos los grupos a partir de una serie de observaciones, estos grupos debían tener unas ciertas características para poder pertenecer a él.  
+Por tanto, ahora agruparemos ese conjunto de 125 coches que nuestro jefe nos designó en distintos grupos para separarlos en un total de 10 garajes repartidos por distintos puntos de Europa.
+
+Para elaborar nuestro informe contamos con aquellas variables que mejor podían clasificar nuestros coches. Potencia, Revoluciones por minuto, peso, consumo urbano y velocidad.  
+Con las variables seleccionados llevamos a cabo un riguroso análisis de datos para completar aquellos datos faltantes y así poder realizar nuestro informe de clasificación.  
+El análisis es de carácter jerárquico ya que nuestro jefe nos especificó que los garajes deberían ser en concreto 10. 
+En el clúster jerárquico, uno de los criterios empleados consiste en determinar la desviación típica ponderada (dtp; en inglés, root-mean-square total-sample standard deviation) de todas las variables que conforman el cluster. 
+Lo que se persigue es que el valor sea lo suﬁcientemente pequeño como para indicar ausencia de heterogeneidad dentro del grupo. Valores elevados de este indicador señalarían la necesidad de crear grupos adicionales. 
+  
+
+Tal y como se requiere en esta última práctica sobre el análisis CLUSTER, finalmente, después de haber solucionado los problemas de selección de variables y tratamiento de valores perdidos, vamos a proceder a asignar los coches a las viviendas de su jefe.
+
+De este modo, indicaremos de qué forma se va a proceder y cuáles son las características tantos de los grupos que hemos creado como de los vehículos que asigna a cada vivenda.
+
+2.1 DESARROLLO.
+
+En primer lugar vamos a cargar los datos con foreign
+```{r}
+library(foreign)
+library(tidyverse)
+library(varhandle)
+library(factoextra)
+library(cluster)
+library(corrplot)
+library(NbClust)
+library(fpc)
+
+TTerreno = as.data.frame(read.spss("tterreno.sav"))
+```
+Tal y como pudimos llevar a cabo en la limpieza de datos y tratamiento de los valores perdidos NAs, los hemos identificado por columnas y hemos visto cuales son y de esta forma, podemos decidir cómo sustituir; en este caso, por el peso de los otros dos coches equivalentes más similares, ya que esta es una opción siempre mejor que sustituir el valor por la media del grupo. 
+
+Quizás, la mejor opción en este caso sea observar su clon u observación más cercana como es el caso del coche nº 19 en nuestro dataset, que es igual al nº18 en todas las demás características.
+
+En el caso de los Nissan y Ssanyong sustituiremos con los consumos medios de la marca.
+Para los UAZ, por el consumo medio de los TT de 7 plazas.
+
+```{r}
+TTerreno %>%
+        group_by(marca) %>%
+        dplyr::summarize(Mean90 = mean(cons90, na.rm=TRUE),
+                         Mean120 = mean(cons120, na.rm=TRUE),
+                         MeanUrb = mean(consurb, na.rm=TRUE)) 
+
+```
+Finalmente, tenemos cons90.4 con todos los consumos y "pisamos" cons90
+Procedemos igual con los cons120 y consurb,
+Jeep  Grand Cherokee Jamb por el 2.5TD 3 ptas (justo encima)
+LADA  por el de los 5 plazas,
+NISSAN y SSanyong por los consumos medios  de la marca a 120,
+Por último, los UAZ por el consumo medio de los TT de 7 plazas.
+
+Luego actuamos del mismo modo para consurb y velocidad y eliminamos los sobrantes.
+
+
+Definimos el DF con las variables que queremos, todas menos rpm, acelerac, acel2 y comprobamos los NA.
+
+```{r}
+TT=TTerreno[, c(1:13)]
+TT$rpm=NULL
+
+apply(TT, 2, function(x) {sum(is.na(x))})
+
+TT$TT <- paste(TT$marca,"-",TT$modelo)
+TT[,c(1,2)]=NULL
+
+TT$TT <- with(TT, make.unique(as.character(TT)))
+
+TT = data.frame(TT[,-11], row.names=TT[,11])
+```
+
+En este punto, ya tenemos nuestro Data Frame listo y limpio para poder comenzar el análisis CLÚSTER de manera oportuna y para ello redefinimos las variables cilindros y plazas como numéricas con un factor de varhandle.
+En esta primera fase vamos a caracteriza los vehículos también para que así posteriormente sea más sencillo identificar los grupos o clusters a los que se va a enviar cada vehículo.
+
+```{r}
+
+TT$cilindro=unfactor(TT$cilindro)
+TT$plazas=unfactor(TT$plazas)
+
+TT_stats = data.frame(
+        Min = apply(TT, 2, min), # mín
+        P25 = apply(TT, 2, quantile, probs=c(0.25), na.rm=TRUE),
+        Med = apply(TT, 2, median), # mediana
+        P75 = apply(TT, 2, quantile, probs=c(0.75), na.rm=TRUE),
+        Max = apply(TT, 2, max), # máx
+        Mean = apply(TT, 2, mean), # media
+        SD = apply(TT, 2, sd) # desv est
+        )
+TT_stats = round(TT_stats, 1)
+TT_stats
+
+```
+
+FASE 2. Vamos a comprobar distancias sobre variables tipificadas y por tanto tipificamos las variables.
+
+Tmabién vamos a visualizar de las matrices de distancia mediante corrplot() del package corrplot, que cargamos.
+
+Podemos emplear el dendrograma para visualizar grupos de observaciones similares
+De esta forma, ya empezamos a observar grupos de vehículos similares basados en la distancia euclídea.
+
+
+Fase 3. Clusters iniciales y pruebas.
+
+En esta fase vamos a mirar cual sería el número "óptimo" de clusters lo cual nos va a proporcionar una solución fundamental en cuanto al objetivo de esta última tarea para los "Coches del jefe".
+
+Realizamos una primera aproximación con un método no jerárquico o de partición que va a ser el ya conocido algoritmo de k-medias sin embargo sus principales debilidades, obligan al data scientist a prestar particular atención: 
+
+• Exige un conocimiento previo del conjunto de datos a analizar para determinar apropiadamente el número de grupos a priori. Sin embargo, mediante las técnicas de evaluación y validación que veremos posteriormente (que básicamente consisten en computar múltiples grupos y compararlos hasta encontrar la solución adecuada) esta diﬁcultad puede superarse; 
+
+• Es sensible a la semilla inicial; cambios en la semilla aleatoria pueden afectar a la composición ﬁnal de los grupos. Efectuamos entonces una asignación inicial para un grupo dado de clusters con diversas semillas aleatorias para escoger aquella solución que minimice la suma total de cuadrados intra-cluster. 
+
+Todo ello nos lleva a despreciar esta opción, al no detectarse diferencias entre los vehículos, y pasamos a un jerárquico pero estas opciones resultan forzadas, por lo que igualmente debemos estimar nuevas pruebas que nos faciliten diversas soluciones.
+
+El algoritmo PAM, Partitioning Around Medoids. 
+Un problema del algoritmo de k-medias es su gran sensibilidad a los outliers; el PAM (conocido también como k-medioides)lo resuelve;
+
+Dicho proceso comienza identiﬁcando las "k" observaciones o meidoides que mejor representen a los grupos; se irán asignando las observaciones a los grupos en los que más cercanas se encuentren de sus mediodes, y se irá recalculando si el medioide era o no representativo mediante la suma de las disimilaridades de la observación respecto de la representante de su grupo. Dentro del grupo se computa la disimilaridad mediante la métrica euclídea al cuadrado por defecto, pudiendo modiﬁcarse con metric="mahattan" siempre que no sea una matriz de disimilaridades, en cuyo caso el argumento será obviado. 
+
+Para ello vamos a coger un conjunto de datos aleatorios
+
+Como podemos observar, se trata de observaciones representativas de cada grupo, no centroides.
+
+En cuanto al cluster de pertenencia de cada observación, lo obtenemos de la siguiente función.
+
+
+Podemos entonces efectuar una primera representaciónpara más tarde también representar el perfil de cada cluster.
+
+Como hemos podido comporbar, este último método es bastante exigente en términos computacionales, de forma que en conjuntos más grandes como es nuestro caso, suele ser preferible emplear el CLARA.
+
+CLARA: Clustering LArge Applications.
+CLARA es un algoritmo para efectuar análisis clúster sobre grandes conjuntos de varios miles de observaciones; es importante notar que la característica “grande” dependerá tanto de la RAM como de la velocidad de proceso. 
+
+Vamos a fijar varias combinaciones de clústers y los comparamos con la solución aleatoria.
+
+Posteriormente evaluamos la bondad del Análisis Clúster con el método de Hopkins: cuanto más cercano a cero, mejor capacidad de segmentación.
+
+Para ello aplicamos el estadístico sobre los datos reales y luego sobre los datos reales
+
+Como podremos comprobar, la diferencia es significativa.
+
+Fase 4. Determinación del número "óptimo" de clusters
+Esta va a ser la fase determinante de nuestra práctica
+
+Una cuestión interesante sería el por qué usar un número determinado de grupos y no más o menos.
+
+Esto tiene que ver son la sensibilidad del algoritmo al número de conjuntos aletorios escogidos inicialmente; cuanto mayor sea el número, más númerosas serán las conﬁguraciones iniciales que evaluará el algoritmo, ofreciendo ﬁnalmente la solución que minimice la heterogeneidad intra-grupos. 
+
+
+Para el clúster jerárquico nos va a sugerir 3 grupos.
+
+```{r}
+TT_tip = scale(TT)
+
+fviz_nbclust(TT_tip,  hcut, method = "wss") +
+        geom_vline(xintercept = 3, linetype = 2) +
+        ggtitle("Número óptimo de clusters - jerárquico") +
+        labs(x="Número k de clusters",y="Suma total de cuadrados intra grupos")
+
+
+```
+
+
+Pero posteriormente vamos a determinar del número de clusters con NBClust para obtener así una mayor aproximación
+
+
+Así mismo tenemos que observar los valores del estadístico de corte para luego comprobar cuál sería finalemnte el número más óptimo de clusters, el cual en este caso nos indica que es de 2 y por lo tanto ese va a ser el número óptimo de clusters a utilizar en nuestra práctica y para el cual aplicaremos nuestro criterio de agrupar los coches del jefe según sus características y valores más significativos como bien pueden ser
+
+Realizamos el cálculo de todos los índices, menos los 4 que son muy exigentes operacionalmente
+
+```{r}
+nb.todos = NbClust(TT_tip, distance = "euclidean", min.nc = 2,
+                   max.nc = 10, method = "complete", index ="all")
+
+fviz_nbclust(nb.todos) + theme_minimal() +
+        labs(x="Número k de clusters", y="Frecuencia")
+```
+
+
+3.1 CONCLUSIÓN.
+
+Finalmente podemos visualizar un resumen en el cual se oberva claramente como hemos llegado a nuestra conclusión final de utilizar 3 como el número óptimo de Clústers.
+
+Tal y como apuntamos en nuestro anterior informe, decidimos que la mejor agrupación de los coches debería de ser 6 desde el punto de vista del negocio, ya que es la óptima manera de organizar nuestra flota de vehículos. Esta decisión no ha sido fácil ya que nuestro jefe nos exigió en un primer momento que fuesen 10 y tuvimos que meditarla con todas sus consecuencias.  
+Desde un punto de vista económico y con el fin de reducir costes nuestra asignación sería la más idónea frente a una asignación con criterio estadístico o a la que nos fue encargada.  
+
+De manera detallada y basándonos en la información media por variables dentro de cada grupo se ha decidido reunir los 6 clústeres en 5 grupos:  
+
+Grupo 1: Agruparemos los clústeres 1 y 2. Las características de los vehículos de estos garajes son similares en cuanto al peso. Los enviaremos a los garajes de Niza y Córcega porque el transporte por mar nos penalizaría en coste por su alto peso.  
+
+Grupo 2: Los coches pertenecientes al clúster 6 son los que presentan mayor consumo en carretera y por tanto deberán ir a la zona de Andorra para un mayor ahorro en gasolina. 
+
+Grupo 3: Coches pertenecientes al clúster tres, también presentan un alto consumo en carretera por tanto debemos mandarlos al garaje más cercano (La Rochelle), para evitar altos costes en gasolina.
+
+Grupo 4: Los coches del clúster 5 deberán ir a Paris por criterios de potencia, velocidad y consumo.
+
+Grupo 5: El clúster cuatro se enviarán a las dos ciudades suizas por ser los vehículos restantes.  
+ 
+
+
+
